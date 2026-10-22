@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
     AtomEnum, ChangeWindowAttributesAux, ConnectionExt, EventMask, GrabMode, ModMask, Window,
@@ -11,7 +11,7 @@ use x11rb::protocol::Event;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HotkeyAction {
-    GoHome,        // Ctrl + Space
+    GoHome,        // Ctrl + Alt
     StopMirroring, // Ctrl + Escape
     GoBack,        // Ctrl + Backspace
     AppSwitcher,   // Ctrl + Tab
@@ -21,14 +21,20 @@ pub enum HotkeyAction {
 const KEYCODE_ESCAPE: u8 = 9;
 const KEYCODE_BACKSPACE: u8 = 22;
 const KEYCODE_TAB: u8 = 23;
-const KEYCODE_SPACE: u8 = 65;
+const KEYCODE_CTRL_L: u8 = 37;
+const KEYCODE_ALT_L: u8 = 64;
+const KEYCODE_CTRL_R: u8 = 105;
+const KEYCODE_ALT_R: u8 = 108;
 
-const TARGET_KEYCODES: [u8; 4] = [
-    KEYCODE_SPACE,
+const CTRL_COMBO_KEYCODES: [u8; 5] = [
+    KEYCODE_ALT_L,
+    KEYCODE_ALT_R,
     KEYCODE_ESCAPE,
     KEYCODE_BACKSPACE,
     KEYCODE_TAB,
 ];
+
+const ALT_COMBO_KEYCODES: [u8; 2] = [KEYCODE_CTRL_L, KEYCODE_CTRL_R];
 
 pub struct HotkeyWatcher {
     pub rx: Receiver<HotkeyAction>,
@@ -59,7 +65,6 @@ fn run_x11_hotkey_loop(
     let net_wm_name = conn.intern_atom(false, b"_NET_WM_NAME")?.reply()?.atom;
     let utf8_string = conn.intern_atom(false, b"UTF8_STRING")?.reply()?.atom;
 
-    // Listen for property changes on the root window so we know immediately when active window changes
     conn.change_window_attributes(
         root,
         &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE),
@@ -67,6 +72,7 @@ fn run_x11_hotkey_loop(
     conn.flush()?;
 
     let mut is_grabbed = false;
+    let mut last_home_trigger = Instant::now() - Duration::from_secs(5);
 
     update_grab_state(
         &conn,
@@ -91,17 +97,20 @@ fn run_x11_hotkey_loop(
                     );
                 }
                 Event::KeyPress(ev) => match ev.detail {
-                    KEYCODE_SPACE => {
-                        send_adb_keyevent_async(&adb_bin, "KEYCODE_HOME");
-                        let _ = tx.send(HotkeyAction::GoHome);
-                        ctx.request_repaint();
+                    KEYCODE_ALT_L | KEYCODE_ALT_R | KEYCODE_CTRL_L | KEYCODE_CTRL_R => {
+                        // Debounce slightly in case both modifier key events fire rapidly
+                        if last_home_trigger.elapsed() >= Duration::from_millis(250) {
+                            last_home_trigger = Instant::now();
+                            send_adb_keyevent_async(&adb_bin, "KEYCODE_HOME");
+                            let _ = tx.send(HotkeyAction::GoHome);
+                            ctx.request_repaint();
+                        }
                     }
                     KEYCODE_ESCAPE => {
                         if is_grabbed {
                             ungrab_shortcuts(&conn, root);
                             is_grabbed = false;
                         }
-                        // Close the active scrcpy window immediately (works even when Screenr UI is hidden to tray)
                         if let Some(active_win) = get_active_window(&conn, root, net_active_window)
                         {
                             let _ = conn.destroy_window(active_win);
@@ -249,30 +258,42 @@ fn get_window_title<C: Connection>(
 }
 
 fn grab_shortcuts<C: Connection>(conn: &C, root: Window) {
-    let modifiers = [
+    // 1. Holding Control + pressing Alt / Esc / Backspace / Tab
+    let ctrl_modifiers = [
         ModMask::CONTROL,
         ModMask::CONTROL | ModMask::M2,
         ModMask::CONTROL | ModMask::LOCK,
         ModMask::CONTROL | ModMask::M2 | ModMask::LOCK,
     ];
 
-    for &key in &TARGET_KEYCODES {
-        for &mods in &modifiers {
-            let _ = conn.grab_key(
-                false,
-                root,
-                mods,
-                key,
-                GrabMode::ASYNC,
-                GrabMode::ASYNC,
-            );
+    for &key in &CTRL_COMBO_KEYCODES {
+        for &mods in &ctrl_modifiers {
+            let _ = conn.grab_key(false, root, mods, key, GrabMode::ASYNC, GrabMode::ASYNC);
         }
     }
+
+    // 2. Holding Alt (M1) + pressing Control (so Ctrl+Alt works in either order!)
+    let alt_modifiers = [
+        ModMask::M1,
+        ModMask::M1 | ModMask::M2,
+        ModMask::M1 | ModMask::LOCK,
+        ModMask::M1 | ModMask::M2 | ModMask::LOCK,
+    ];
+
+    for &key in &ALT_COMBO_KEYCODES {
+        for &mods in &alt_modifiers {
+            let _ = conn.grab_key(false, root, mods, key, GrabMode::ASYNC, GrabMode::ASYNC);
+        }
+    }
+
     let _ = conn.flush();
 }
 
 fn ungrab_shortcuts<C: Connection>(conn: &C, root: Window) {
-    for &key in &TARGET_KEYCODES {
+    for &key in &CTRL_COMBO_KEYCODES {
+        let _ = conn.ungrab_key(key, root, ModMask::ANY);
+    }
+    for &key in &ALT_COMBO_KEYCODES {
         let _ = conn.ungrab_key(key, root, ModMask::ANY);
     }
     let _ = conn.flush();

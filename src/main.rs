@@ -222,7 +222,7 @@ impl ScreenrApp {
         while let Ok(hk) = self.hotkeys.rx.try_recv() {
             match hk {
                 HotkeyAction::GoHome => {
-                    self.set_status(LogLevel::Info, "Shortcut: Home (Ctrl+Space)");
+                    self.set_status(LogLevel::Info, "Shortcut: Home (Ctrl+Alt)");
                 }
                 HotkeyAction::StopMirroring => {
                     if let Some(dev) = self.active_device().cloned() {
@@ -688,7 +688,7 @@ impl ScreenrApp {
             ui.add_space(6.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("Ctrl+Space Home  ·  Ctrl+Esc Stop & Lock  ·  Ctrl+Bksp Back  ·  Ctrl+Tab Apps")
+                    RichText::new("Ctrl+Alt Home  ·  Ctrl+Esc Stop & Lock  ·  Ctrl+Bksp Back  ·  Ctrl+Tab Apps")
                         .size(10.5)
                         .color(Color32::from_rgb(120, 138, 168)),
                 );

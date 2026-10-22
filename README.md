@@ -12,7 +12,7 @@
   - **Auto-Lock on Stop**: Automatically locks your phone (`KEYCODE_SLEEP`) the moment you close the mirror window or stop mirroring.
 - **Virtual Desktop Display Mode (`1920×1080`)**: Launch a widescreen 16:9 desktop-scaled (`180 DPI`) virtual second screen on your Android device while keeping the physical screen independent.
 - **Focus-Aware Keyboard Shortcuts (X11)**:
-  - `Ctrl + Space` → **Home Screen** (`KEYCODE_HOME`)
+  - `Ctrl + Alt` → **Home Screen** (`KEYCODE_HOME`)
   - `Ctrl + Esc` → **Close Mirroring & Lock Phone** (`KEYCODE_SLEEP`)
   - `Ctrl + Backspace` → **Back** (`KEYCODE_BACK`)
   - `Ctrl + Tab` → **App Switcher / Recents** (`KEYCODE_APP_SWITCH`)
