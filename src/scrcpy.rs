@@ -57,24 +57,28 @@ impl ScrcpyManager {
     pub fn poll_running(&mut self) -> Vec<String> {
         let mut messages = Vec::new();
         let mut ended_serials = Vec::new();
-        self.sessions.retain_mut(|sess| match sess.child.try_wait() {
-            Ok(Some(status)) => {
-                ended_serials.push(sess.serial.clone());
-                if !status.success() && status.code() != Some(0) {
-                    messages.push(format!(
-                        "{} on {} exited (code {:?}).",
-                        sess.kind.label(),
-                        sess.model,
-                        status.code()
-                    ));
-                } else {
-                    messages.push(format!("{} session ended · Phone locked", sess.kind.label()));
+        self.sessions
+            .retain_mut(|sess| match sess.child.try_wait() {
+                Ok(Some(status)) => {
+                    ended_serials.push(sess.serial.clone());
+                    if !status.success() && status.code() != Some(0) {
+                        messages.push(format!(
+                            "{} on {} exited (code {:?}).",
+                            sess.kind.label(),
+                            sess.model,
+                            status.code()
+                        ));
+                    } else {
+                        messages.push(format!(
+                            "{} session ended · Phone locked",
+                            sess.kind.label()
+                        ));
+                    }
+                    false
                 }
-                false
-            }
-            Ok(None) => true,
-            Err(_) => false,
-        });
+                Ok(None) => true,
+                Err(_) => false,
+            });
         for serial in ended_serials {
             lock_device_screen(&self.adb_bin, &serial);
         }
@@ -265,7 +269,7 @@ impl ScrcpyManager {
         if settings.always_on_top {
             args.push("--always-on-top".to_string());
         }
-        if settings. audio_mode == AudioMode::Muted {
+        if settings.audio_mode == AudioMode::Muted {
             args.push("--no-audio".to_string());
         } else {
             args.push("--audio-source=mic-camcorder".to_string());
@@ -291,9 +295,13 @@ impl ScrcpyManager {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
 
-        let child = cmd
-            .spawn()
-            .map_err(|e| format!("Failed to launch scrcpy ({}): {}", self.scrcpy_bin.display(), e))?;
+        let child = cmd.spawn().map_err(|e| {
+            format!(
+                "Failed to launch scrcpy ({}): {}",
+                self.scrcpy_bin.display(),
+                e
+            )
+        })?;
 
         let id = self.next_id;
         self.next_id += 1;
@@ -316,7 +324,14 @@ impl Drop for ScrcpyManager {
         for sess in &mut self.sessions {
             let _ = sess.child.kill();
             let _ = Command::new(&self.adb_bin)
-                .args(["-s", &sess.serial, "shell", "input", "keyevent", "KEYCODE_SLEEP"])
+                .args([
+                    "-s",
+                    &sess.serial,
+                    "shell",
+                    "input",
+                    "keyevent",
+                    "KEYCODE_SLEEP",
+                ])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())

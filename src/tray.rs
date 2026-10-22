@@ -52,8 +52,8 @@ impl Tray for TrayState {
         // Primary 1-Click Action at the very top of the tray menu!
         if self.is_mirroring {
             let label = match &self.device_label {
-                Some(d) => format!("⏹  Stop Mirroring ({})", d),
-                None => "⏹  Stop Mirroring".to_string(),
+                Some(d) => format!("Stop mirroring ({})", d),
+                None => "Stop mirroring".to_string(),
             };
             items.push(
                 StandardItem {
@@ -68,8 +68,8 @@ impl Tray for TrayState {
             );
         } else {
             let label = match &self.device_label {
-                Some(d) => format!("📱  Connect & Mirror {}", d),
-                None => "📱  Connect & Pull Up Phone".to_string(),
+                Some(d) => format!("Connect and mirror {}", d),
+                None => "Connect and mirror".to_string(),
             };
             items.push(
                 StandardItem {
@@ -90,7 +90,7 @@ impl Tray for TrayState {
             if self.is_usb {
                 items.push(
                     StandardItem {
-                        label: "📶  Switch USB to Wireless".into(),
+                        label: "Switch USB to wireless".into(),
                         activate: Box::new(|this: &mut Self| {
                             let _ = this.tx.send(TrayCommand::SwitchUsbToWireless);
                             this.ctx.request_repaint();
@@ -103,7 +103,7 @@ impl Tray for TrayState {
 
             items.push(
                 StandardItem {
-                    label: "📸  Take Phone Screenshot".into(),
+                    label: "Take screenshot".into(),
                     activate: Box::new(|this: &mut Self| {
                         let _ = this.tx.send(TrayCommand::TakeScreenshot);
                         this.ctx.request_repaint();
@@ -118,7 +118,7 @@ impl Tray for TrayState {
 
         items.push(
             StandardItem {
-                label: "🎛  Open Screenr Controls".into(),
+                label: "Open controls".into(),
                 activate: Box::new(|this: &mut Self| {
                     let _ = this.tx.send(TrayCommand::ToggleWindow);
                     this.ctx.request_repaint();
@@ -130,7 +130,7 @@ impl Tray for TrayState {
 
         items.push(
             StandardItem {
-                label: "✕  Quit Screenr".into(),
+                label: "Quit".into(),
                 activate: Box::new(|this: &mut Self| {
                     let _ = this.tx.send(TrayCommand::QuitApp);
                     this.ctx.request_repaint();
@@ -189,11 +189,11 @@ fn build_phone_tray_icon(connected: bool, mirroring: bool) -> Icon {
     let mut data = vec![0u8; w * h * 4];
 
     let (screen_r, screen_g, screen_b) = if mirroring {
-        (52u8, 211u8, 153u8) // Emerald green when actively mirroring
+        (231u8, 233u8, 234u8)
     } else if connected {
-        (59u8, 130u8, 246u8) // Pixel Blue when phone is connected & ready
+        (113u8, 118u8, 123u8)
     } else {
-        (100u8, 116u8, 139u8) // Subtle slate when waiting
+        (47u8, 51u8, 54u8)
     };
 
     for y in 0..h {
@@ -217,14 +217,14 @@ fn build_phone_tray_icon(connected: bool, mirroring: bool) -> Icon {
                 if is_border || is_home_bar {
                     // Crisp white/silver frame (ARGB network byte order)
                     data[idx] = 255;
-                    data[idx + 1] = 241;
-                    data[idx + 2] = 245;
-                    data[idx + 3] = 249;
+                    data[idx + 1] = 231;
+                    data[idx + 2] = 233;
+                    data[idx + 3] = 234;
                 } else if is_camera_dot {
                     data[idx] = 255;
-                    data[idx + 1] = 15;
-                    data[idx + 2] = 23;
-                    data[idx + 3] = 42;
+                    data[idx + 1] = 0;
+                    data[idx + 2] = 0;
+                    data[idx + 3] = 0;
                 } else {
                     // Inner screen glow
                     data[idx] = 240;
