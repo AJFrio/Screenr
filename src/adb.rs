@@ -45,19 +45,50 @@ pub struct InstalledApp {
 #[allow(dead_code)]
 pub enum AdbAction {
     RefreshNow,
-    SwitchUsbToWireless { serial: String },
-    PairWithCode { addr: String, code: String },
-    ConnectDirect { addr: String },
-    DisconnectDevice { serial: String },
-    SendKeyEvent { serial: String, keycode: &'static str },
-    ExpandNotifications { serial: String },
-    ExpandQuickSettings { serial: String },
-    CollapseStatusBar { serial: String },
-    SendText { serial: String, text: String },
-    TakeScreenshot { serial: String },
-    PushFileOrApk { serial: String, path: PathBuf },
-    LoadInstalledApps { serial: String },
-    RegenerateQrCredentials { service_name: String, password: String },
+    SwitchUsbToWireless {
+        serial: String,
+    },
+    PairWithCode {
+        addr: String,
+        code: String,
+    },
+    ConnectDirect {
+        addr: String,
+    },
+    DisconnectDevice {
+        serial: String,
+    },
+    SendKeyEvent {
+        serial: String,
+        keycode: &'static str,
+    },
+    ExpandNotifications {
+        serial: String,
+    },
+    ExpandQuickSettings {
+        serial: String,
+    },
+    CollapseStatusBar {
+        serial: String,
+    },
+    SendText {
+        serial: String,
+        text: String,
+    },
+    TakeScreenshot {
+        serial: String,
+    },
+    PushFileOrApk {
+        serial: String,
+        path: PathBuf,
+    },
+    LoadInstalledApps {
+        serial: String,
+    },
+    RegenerateQrCredentials {
+        service_name: String,
+        password: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -91,7 +122,11 @@ pub enum LogLevel {
 pub fn project_root_dir() -> Option<PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
         // If running from <repo>/target/release/screenr or <repo>/target/debug/screenr
-        if let Some(root) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+        if let Some(root) = exe
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+        {
             if root.join("vendor").exists() || root.join("Cargo.toml").exists() {
                 return Some(root.to_path_buf());
             }
@@ -147,7 +182,13 @@ impl AdbWorkerHandle {
         let worker_adb = adb_path.clone();
 
         thread::spawn(move || {
-            run_adb_worker(worker_adb, action_rx, update_tx, initial_qr_service, initial_qr_pass);
+            run_adb_worker(
+                worker_adb,
+                action_rx,
+                update_tx,
+                initial_qr_service,
+                initial_qr_pass,
+            );
         });
 
         Self {
@@ -314,18 +355,35 @@ fn run_adb_worker(
                     last_poll = Instant::now() - Duration::from_secs(10);
                 }
                 AdbAction::SendKeyEvent { serial, keycode } => {
-                    let _ = run_adb_cmd(&adb, &["-s", &serial, "shell", "input", "keyevent", keycode]);
+                    let _ = run_adb_cmd(
+                        &adb,
+                        &["-s", &serial, "shell", "input", "keyevent", keycode],
+                    );
                 }
                 AdbAction::ExpandNotifications { serial } => {
                     let _ = run_adb_cmd(
                         &adb,
-                        &["-s", &serial, "shell", "cmd", "statusbar", "expand-notifications"],
+                        &[
+                            "-s",
+                            &serial,
+                            "shell",
+                            "cmd",
+                            "statusbar",
+                            "expand-notifications",
+                        ],
                     );
                 }
                 AdbAction::ExpandQuickSettings { serial } => {
                     let _ = run_adb_cmd(
                         &adb,
-                        &["-s", &serial, "shell", "cmd", "statusbar", "expand-settings"],
+                        &[
+                            "-s",
+                            &serial,
+                            "shell",
+                            "cmd",
+                            "statusbar",
+                            "expand-settings",
+                        ],
                     );
                 }
                 AdbAction::CollapseStatusBar { serial } => {
@@ -345,7 +403,8 @@ fn run_adb_worker(
                         .replace('"', "\\\"")
                         .replace('\'', "\\'");
                     if !escaped.is_empty() {
-                        let _ = run_adb_cmd(&adb, &["-s", &serial, "shell", "input", "text", &escaped]);
+                        let _ =
+                            run_adb_cmd(&adb, &["-s", &serial, "shell", "input", "text", &escaped]);
                         let _ = update_tx.send(AdbUpdate::LogMessage {
                             level: LogLevel::Info,
                             message: "Sent text to device.".to_string(),
@@ -427,7 +486,10 @@ fn run_adb_worker(
                             Ok(out) => {
                                 let _ = update_tx.send(AdbUpdate::LogMessage {
                                     level: LogLevel::Success,
-                                    message: format!("File transferred to Downloads: {}", out.trim()),
+                                    message: format!(
+                                        "File transferred to Downloads: {}",
+                                        out.trim()
+                                    ),
                                 });
                             }
                             Err(e) => {
@@ -458,7 +520,11 @@ fn run_adb_worker(
                                 })
                             })
                             .collect();
-                        apps.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
+                        apps.sort_by(|a, b| {
+                            a.display_name
+                                .to_lowercase()
+                                .cmp(&b.display_name.to_lowercase())
+                        });
                         let _ = update_tx.send(AdbUpdate::AppsLoaded { serial, apps });
                     }
                 }
@@ -601,8 +667,10 @@ fn poll_devices(
         let mut resolution = None;
 
         if state == "device" {
-            if let Ok(m) = run_adb_cmd(adb, &["-s", &serial, "shell", "getprop", "ro.product.model"])
-            {
+            if let Ok(m) = run_adb_cmd(
+                adb,
+                &["-s", &serial, "shell", "getprop", "ro.product.model"],
+            ) {
                 let m_clean = m.trim();
                 if !m_clean.is_empty() {
                     model = m_clean.to_string();
@@ -610,7 +678,13 @@ fn poll_devices(
             }
             if let Ok(v) = run_adb_cmd(
                 adb,
-                &["-s", &serial, "shell", "getprop", "ro.build.version.release"],
+                &[
+                    "-s",
+                    &serial,
+                    "shell",
+                    "getprop",
+                    "ro.build.version.release",
+                ],
             ) {
                 let v_clean = v.trim();
                 if !v_clean.is_empty() {
@@ -662,9 +736,20 @@ fn poll_devices(
 }
 
 fn query_device_wifi_ip(adb: &Path, serial: &str) -> Option<String> {
-    if let Ok(out) = run_adb_cmd(adb, &["-s", serial, "shell", "ip", "-o", "-4", "addr", "show", "wlan0"]) {
+    if let Ok(out) = run_adb_cmd(
+        adb,
+        &[
+            "-s", serial, "shell", "ip", "-o", "-4", "addr", "show", "wlan0",
+        ],
+    ) {
         for token in out.split_whitespace() {
-            if token.contains('/') && token.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+            if token.contains('/')
+                && token
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false)
+            {
                 return token.split('/').next().map(|s| s.to_string());
             }
         }
@@ -675,9 +760,15 @@ fn query_device_wifi_ip(adb: &Path, serial: &str) -> Option<String> {
 fn humanize_package_name(pkg: &str) -> String {
     let parts: Vec<&str> = pkg.split('.').collect();
     let last = parts.last().copied().unwrap_or(pkg);
-    let second_last = if parts.len() >= 2 { parts[parts.len() - 2] } else { "" };
+    let second_last = if parts.len() >= 2 {
+        parts[parts.len() - 2]
+    } else {
+        ""
+    };
 
-    let raw = if ["android", "app", "mobile", "client", "apps"].contains(&last) && !second_last.is_empty() {
+    let raw = if ["android", "app", "mobile", "client", "apps"].contains(&last)
+        && !second_last.is_empty()
+    {
         second_last
     } else {
         last

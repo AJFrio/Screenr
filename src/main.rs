@@ -13,6 +13,15 @@ use eframe::egui::{
     self, Color32, ColorImage, CornerRadius, FontId, RichText, Stroke, TextureHandle,
     TextureOptions, Vec2, ViewportCommand,
 };
+
+// X.com dark palette: pure black canvas, off-white type, gray secondary, white actions.
+const BG: Color32 = Color32::from_rgb(0, 0, 0);
+const HOVER: Color32 = Color32::from_rgb(22, 24, 28);
+const BORDER: Color32 = Color32::from_rgb(47, 51, 54);
+const TEXT: Color32 = Color32::from_rgb(231, 233, 234);
+const TEXT_DIM: Color32 = Color32::from_rgb(113, 118, 123);
+const BUTTON_FILL: Color32 = Color32::from_rgb(239, 243, 244);
+const INK: Color32 = Color32::from_rgb(15, 20, 25);
 use hotkeys::{HotkeyAction, HotkeyWatcher};
 use qrcode::{Color as QrColor, QrCode};
 use scrcpy::ScrcpyManager;
@@ -118,7 +127,7 @@ impl ScreenrApp {
                             for dx in 0..scale {
                                 let px = (x + quiet_zone) * scale + dx;
                                 let py = (y + quiet_zone) * scale + dy;
-                                pixels[py * img_size + px] = Color32::from_rgb(12, 15, 23);
+                                pixels[py * img_size + px] = Color32::BLACK;
                             }
                         }
                     }
@@ -129,11 +138,8 @@ impl ScreenrApp {
                 size: [img_size, img_size],
                 pixels,
             };
-            self.qr_texture = Some(ctx.load_texture(
-                "adb_qr_code",
-                color_image,
-                TextureOptions::NEAREST,
-            ));
+            self.qr_texture =
+                Some(ctx.load_texture("adb_qr_code", color_image, TextureOptions::NEAREST));
         }
     }
 
@@ -175,18 +181,16 @@ impl ScreenrApp {
                 LogLevel::Info,
                 format!("Connecting to {} & launching mirror...", svc.address),
             );
-            let _ = self.adb_worker.action_tx.send(AdbAction::ConnectDirect {
-                addr: svc.address,
-            });
+            let _ = self
+                .adb_worker
+                .action_tx
+                .send(AdbAction::ConnectDirect { addr: svc.address });
             return;
         }
 
         if let Some(ref addr) = self.settings.last_known_wifi_addr.clone() {
             self.pending_auto_mirror = true;
-            self.set_status(
-                LogLevel::Info,
-                format!("Reconnecting to {}...", addr),
-            );
+            self.set_status(LogLevel::Info, format!("Reconnecting to {}...", addr));
             let _ = self
                 .adb_worker
                 .action_tx
@@ -209,12 +213,8 @@ impl ScreenrApp {
         let is_mirroring = dev
             .map(|d| self.scrcpy_mgr.is_mirroring_device(&d.serial))
             .unwrap_or(false);
-        self.tray.update_status(
-            label,
-            is_usb,
-            is_mirroring,
-            self.settings.turn_screen_off,
-        );
+        self.tray
+            .update_status(label, is_usb, is_mirroring, self.settings.turn_screen_off);
     }
 
     fn poll_updates(&mut self, ctx: &egui::Context) {
@@ -262,11 +262,10 @@ impl ScreenrApp {
                 }
                 TrayCommand::SwitchUsbToWireless => {
                     if let Some(dev) = self.active_device().cloned() {
-                        let _ = self.adb_worker.action_tx.send(
-                            AdbAction::SwitchUsbToWireless {
-                                serial: dev.serial,
-                            },
-                        );
+                        let _ = self
+                            .adb_worker
+                            .action_tx
+                            .send(AdbAction::SwitchUsbToWireless { serial: dev.serial });
                     }
                 }
                 TrayCommand::TakeScreenshot => {
@@ -384,7 +383,10 @@ impl ScreenrApp {
                     });
                 }
             } else {
-                self.set_status(LogLevel::Warning, "Connect your Pixel 10 first to drop files");
+                self.set_status(
+                    LogLevel::Warning,
+                    "Connect your Pixel 10 first to drop files",
+                );
             }
         }
 
@@ -411,58 +413,27 @@ impl eframe::App for ScreenrApp {
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::NONE
-                    .fill(Color32::from_rgb(11, 14, 20))
+                    .fill(BG)
                     .inner_margin(egui::Margin::symmetric(18, 16)),
             )
             .show(ctx, |ui| {
-                // Sleek Top Header Bar
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new("Screenr")
-                            .font(FontId::proportional(19.0))
+                            .font(FontId::proportional(20.0))
                             .strong()
-                            .color(Color32::from_rgb(245, 248, 255)),
+                            .color(TEXT),
                     );
-                    egui::Frame::NONE
-                        .fill(Color32::from_rgb(22, 32, 56))
-                        .corner_radius(CornerRadius::same(20))
-                        .inner_margin(egui::Margin::symmetric(8, 2))
-                        .show(ui, |ui| {
-                            ui.label(
-                                RichText::new("Pixel 10")
-                                    .size(11.0)
-                                    .strong()
-                                    .color(Color32::from_rgb(147, 197, 253)),
-                            );
-                        });
+                    ui.add_space(6.0);
+                    pill(ui, "Pixel");
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self.view_mode == ViewMode::PairingSheet {
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        RichText::new("← Back")
-                                            .size(12.5)
-                                            .color(Color32::from_rgb(190, 205, 230)),
-                                    )
-                                    .fill(Color32::from_rgb(24, 30, 44))
-                                    .corner_radius(CornerRadius::same(8)),
-                                )
-                                .clicked()
-                            {
+                            if header_button(ui, "Back").clicked() {
                                 self.view_mode = ViewMode::MainCard;
                             }
-                        } else if ui
-                            .add(
-                                egui::Button::new(
-                                    RichText::new("📶 Pair Wi-Fi")
-                                        .size(12.0)
-                                        .color(Color32::from_rgb(190, 205, 230)),
-                                )
-                                .fill(Color32::from_rgb(22, 28, 40))
-                                .corner_radius(CornerRadius::same(8)),
-                            )
-                            .on_hover_text("Pair your Pixel 10 wirelessly via QR code or pairing code")
+                        } else if header_button(ui, "Pair")
+                            .on_hover_text("Pair wirelessly with a QR code or pairing code")
                             .clicked()
                         {
                             self.view_mode = ViewMode::PairingSheet;
@@ -491,110 +462,57 @@ impl ScreenrApp {
                 let is_mirroring = self.scrcpy_mgr.is_mirroring_device(&dev.serial);
 
                 ui.horizontal(|ui| {
-                    let dot_color = if is_mirroring {
-                        Color32::from_rgb(52, 211, 153)
-                    } else if is_online {
-                        Color32::from_rgb(59, 130, 246)
-                    } else {
-                        Color32::from_rgb(251, 191, 36)
-                    };
-                    ui.label(RichText::new("●").size(14.0).color(dot_color));
-                    ui.label(
-                        RichText::new(&dev.model)
-                            .size(17.5)
-                            .strong()
-                            .color(Color32::WHITE),
-                    );
+                    let dot_color = if is_online { TEXT } else { TEXT_DIM };
+                    ui.label(RichText::new("●").size(12.0).color(dot_color));
+                    ui.label(RichText::new(&dev.model).size(17.0).strong().color(TEXT));
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let conn_badge = match dev.kind {
-                            ConnectionKind::Wifi => "📶 Wi-Fi",
-                            ConnectionKind::Usb => "🔌 USB",
+                        let conn = match dev.kind {
+                            ConnectionKind::Wifi => "Wi-Fi",
+                            ConnectionKind::Usb => "USB",
                         };
                         let bat_str = dev
                             .battery_level
                             .map(|b| format!(" · {}%", b))
                             .unwrap_or_default();
-
-                        egui::Frame::NONE
-                            .fill(Color32::from_rgb(28, 36, 52))
-                            .corner_radius(CornerRadius::same(20))
-                            .inner_margin(egui::Margin::symmetric(9, 3))
-                            .show(ui, |ui| {
-                                ui.label(
-                                    RichText::new(format!("{}{}", conn_badge, bat_str))
-                                        .size(11.5)
-                                        .color(Color32::from_rgb(186, 204, 232)),
-                                );
-                            });
+                        let state = if is_mirroring {
+                            "Mirroring"
+                        } else if is_online {
+                            "Ready"
+                        } else {
+                            "Locked"
+                        };
+                        pill(ui, &format!("{} · {}{}", state, conn, bat_str));
                     });
                 });
 
-                // If connected via USB, show a sleek 1-click pill to switch to wireless
                 if dev.kind == ConnectionKind::Usb && is_online {
-                    ui.add_space(6.0);
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                RichText::new("⚡ Switch to Wireless (Unplug USB)")
-                                    .size(12.0)
-                                    .color(Color32::from_rgb(165, 243, 252)),
-                            )
-                            .fill(Color32::from_rgb(20, 48, 66))
-                            .corner_radius(CornerRadius::same(8)),
-                        )
-                        .clicked()
-                    {
-                        let _ = self.adb_worker.action_tx.send(
-                            AdbAction::SwitchUsbToWireless {
+                    ui.add_space(2.0);
+                    if text_button(ui, "Switch to wireless").clicked() {
+                        let _ = self
+                            .adb_worker
+                            .action_tx
+                            .send(AdbAction::SwitchUsbToWireless {
                                 serial: dev.serial.clone(),
-                            },
-                        );
+                            });
                     }
                 } else if !is_online {
                     ui.add_space(4.0);
                     ui.label(
-                        RichText::new("Unlock phone & tap 'Allow Debugging'")
-                            .size(12.0)
-                            .color(Color32::from_rgb(251, 191, 36)),
+                        RichText::new("Unlock the phone and allow debugging")
+                            .size(13.0)
+                            .color(TEXT_DIM),
                     );
                 }
 
                 ui.add_space(12.0);
 
-                // BIG PRIMARY CTA BUTTON
                 if is_mirroring {
-                    if ui
-                        .add_sized(
-                            [ui.available_width(), 46.0],
-                            egui::Button::new(
-                                RichText::new("⏹   Stop Mirroring")
-                                    .size(15.5)
-                                    .strong()
-                                    .color(Color32::WHITE),
-                            )
-                            .fill(Color32::from_rgb(220, 38, 38))
-                            .corner_radius(CornerRadius::same(11)),
-                        )
-                        .clicked()
-                    {
+                    if outline_button(ui, "Stop mirroring").clicked() {
                         self.scrcpy_mgr.stop_for_device(&dev.serial);
                         self.set_status(LogLevel::Info, "Mirroring stopped");
                     }
-                } else if ui
-                    .add_sized(
-                        [ui.available_width(), 46.0],
-                        egui::Button::new(
-                            RichText::new("▶   Mirror Pixel 10")
-                                .size(15.5)
-                                .strong()
-                                .color(Color32::WHITE),
-                        )
-                        .fill(Color32::from_rgb(37, 99, 235))
-                        .corner_radius(CornerRadius::same(11)),
-                    )
-                    .clicked()
-                {
+                } else if primary_button(ui, "Mirror").clicked() {
                     match self.scrcpy_mgr.start_screen_mirror(
                         &dev.serial,
                         &dev.model,
@@ -607,40 +525,23 @@ impl ScreenrApp {
             } else {
                 // No phone connected yet
                 ui.horizontal(|ui| {
+                    ui.label(RichText::new("●").size(12.0).color(TEXT_DIM));
                     ui.label(
-                        RichText::new("●")
-                            .size(13.0)
-                            .color(Color32::from_rgb(100, 116, 139)),
-                    );
-                    ui.label(
-                        RichText::new("No Phone Connected")
-                            .size(16.0)
+                        RichText::new("No phone connected")
+                            .size(17.0)
                             .strong()
-                            .color(Color32::from_rgb(226, 232, 240)),
+                            .color(TEXT),
                     );
                 });
                 ui.add_space(4.0);
                 ui.label(
-                    RichText::new("Scan QR code in Wireless Debugging or plug in via USB.")
-                        .size(12.0)
-                        .color(Color32::from_rgb(140, 154, 178)),
+                    RichText::new("Scan the QR code in Wireless debugging, or plug in over USB.")
+                        .size(13.0)
+                        .color(TEXT_DIM),
                 );
                 ui.add_space(12.0);
 
-                if ui
-                    .add_sized(
-                        [ui.available_width(), 44.0],
-                        egui::Button::new(
-                            RichText::new("📶   Pair Pixel 10 Wirelessly")
-                                .size(15.0)
-                                .strong()
-                                .color(Color32::WHITE),
-                        )
-                        .fill(Color32::from_rgb(37, 99, 235))
-                        .corner_radius(CornerRadius::same(11)),
-                    )
-                    .clicked()
-                {
+                if primary_button(ui, "Pair wirelessly").clicked() {
                     self.view_mode = ViewMode::PairingSheet;
                 }
             }
@@ -678,7 +579,7 @@ impl ScreenrApp {
                             keycode: "KEYCODE_POWER",
                         });
                     }
-                    if mini_remote_btn(&mut cols[4], "📸", "Shot").clicked() {
+                    if mini_remote_btn(&mut cols[4], "◻", "Shot").clicked() {
                         let _ = self.adb_worker.action_tx.send(AdbAction::TakeScreenshot {
                             serial: serial.clone(),
                         });
@@ -688,9 +589,11 @@ impl ScreenrApp {
             ui.add_space(6.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("Ctrl+Alt Home  ·  Ctrl+Esc Stop & Lock  ·  Ctrl+Bksp Back  ·  Ctrl+Tab Apps")
-                        .size(10.5)
-                        .color(Color32::from_rgb(120, 138, 168)),
+                    RichText::new(
+                        "Ctrl+Alt Home  ·  Ctrl+Esc Stop  ·  Ctrl+Bksp Back  ·  Ctrl+Tab Apps",
+                    )
+                    .size(11.0)
+                    .color(TEXT_DIM),
                 );
             });
         });
@@ -704,16 +607,11 @@ impl ScreenrApp {
             // Quality Profile Row
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    ui.label(
-                        RichText::new("Performance Profile")
-                            .size(13.5)
-                            .strong()
-                            .color(Color32::from_rgb(230, 238, 252)),
-                    );
+                    ui.label(RichText::new("Performance").size(15.0).strong().color(TEXT));
                     ui.label(
                         RichText::new(self.settings.preset.short_badge())
-                            .size(11.5)
-                            .color(Color32::from_rgb(130, 148, 175)),
+                            .size(13.0)
+                            .color(TEXT_DIM),
                     );
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -789,9 +687,9 @@ impl ScreenrApp {
                 if ui
                     .add(
                         egui::Button::new(
-                            RichText::new(format!("More Tools (Camera, Volume, Shade) {}", arrow))
-                                .size(11.5)
-                                .color(Color32::from_rgb(140, 158, 188)),
+                            RichText::new(format!("More  {}", arrow))
+                                .size(13.0)
+                                .color(TEXT_DIM),
                         )
                         .frame(false),
                     )
@@ -807,27 +705,27 @@ impl ScreenrApp {
                 ui.add_enabled_ui(serial_opt.is_some(), |ui| {
                     let serial = serial_opt.unwrap_or_default();
                     ui.columns(4, |c| {
-                        if c[0].button("🔉 Vol -").clicked() {
+                        if c[0].button("Vol −").clicked() {
                             let _ = self.adb_worker.action_tx.send(AdbAction::SendKeyEvent {
                                 serial: serial.clone(),
                                 keycode: "KEYCODE_VOLUME_DOWN",
                             });
                         }
-                        if c[1].button("🔊 Vol +").clicked() {
+                        if c[1].button("Vol +").clicked() {
                             let _ = self.adb_worker.action_tx.send(AdbAction::SendKeyEvent {
                                 serial: serial.clone(),
                                 keycode: "KEYCODE_VOLUME_UP",
                             });
                         }
-                        if c[2].button("🔔 Shade").clicked() {
-                            let _ = self
-                                .adb_worker
-                                .action_tx
-                                .send(AdbAction::ExpandNotifications {
-                                    serial: serial.clone(),
-                                });
+                        if c[2].button("Shade").clicked() {
+                            let _ =
+                                self.adb_worker
+                                    .action_tx
+                                    .send(AdbAction::ExpandNotifications {
+                                        serial: serial.clone(),
+                                    });
                         }
-                        if c[3].button("📷 Camera").clicked() {
+                        if c[3].button("Camera").clicked() {
                             if let Some(ref d) = dev_opt {
                                 let _ = self.scrcpy_mgr.start_camera_stream(
                                     &d.serial,
@@ -849,24 +747,22 @@ impl ScreenrApp {
 
         // 4. SUBTLE DROP FOOTER + TRAY HINT
         egui::Frame::NONE
-            .fill(Color32::from_rgb(15, 20, 30))
-            .corner_radius(CornerRadius::same(10))
-            .inner_margin(egui::Margin::symmetric(12, 8))
-            .stroke(Stroke::new(1.0, Color32::from_rgb(30, 40, 58)))
+            .fill(BG)
+            .corner_radius(CornerRadius::same(16))
+            .inner_margin(egui::Margin::symmetric(14, 10))
+            .stroke(Stroke::new(1.0, BORDER))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new("📥 Drop files or .apk here to send to phone")
-                            .size(11.5)
-                            .color(Color32::from_rgb(148, 163, 184)),
+                        RichText::new("Drop a file or .apk to send it to the phone")
+                            .size(13.0)
+                            .color(TEXT_DIM),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add(
                                 egui::Button::new(
-                                    RichText::new("Hide to Tray")
-                                        .size(11.0)
-                                        .color(Color32::from_rgb(147, 197, 253)),
+                                    RichText::new("Hide").size(13.0).strong().color(TEXT),
                                 )
                                 .frame(false),
                             )
@@ -881,13 +777,15 @@ impl ScreenrApp {
 
         ui.add_space(6.0);
         let status_col = match self.status_level {
-            LogLevel::Info => Color32::from_rgb(120, 136, 162),
-            LogLevel::Success => Color32::from_rgb(110, 231, 183),
-            LogLevel::Warning => Color32::from_rgb(253, 224, 71),
-            LogLevel::Error => Color32::from_rgb(252, 165, 165),
+            LogLevel::Info | LogLevel::Warning => TEXT_DIM,
+            LogLevel::Success | LogLevel::Error => TEXT,
         };
         ui.vertical_centered(|ui| {
-            ui.label(RichText::new(&self.status_text).size(11.5).color(status_col));
+            ui.label(
+                RichText::new(&self.status_text)
+                    .size(11.5)
+                    .color(status_col),
+            );
         });
     }
 
@@ -895,16 +793,16 @@ impl ScreenrApp {
         sleek_card(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("Scan with Pixel 10")
-                        .size(16.5)
+                    RichText::new("Scan with your phone")
+                        .size(17.0)
                         .strong()
-                        .color(Color32::WHITE),
+                        .color(TEXT),
                 );
                 ui.add_space(4.0);
                 ui.label(
-                    RichText::new("Settings → Developer options → Wireless debugging\nTap 'Pair device with QR code'")
-                        .size(12.0)
-                        .color(Color32::from_rgb(148, 163, 184)),
+                    RichText::new("Settings → Developer options → Wireless debugging\nPair device with QR code")
+                        .size(13.0)
+                        .color(TEXT_DIM),
                 );
                 ui.add_space(12.0);
 
@@ -920,9 +818,9 @@ impl ScreenrApp {
 
                 ui.add_space(10.0);
                 ui.label(
-                    RichText::new("Waiting for phone scan on local Wi-Fi...")
-                        .size(11.5)
-                        .color(Color32::from_rgb(96, 165, 250)),
+                    RichText::new("Waiting for a scan on this Wi-Fi network")
+                        .size(13.0)
+                        .color(TEXT_DIM),
                 );
             });
 
@@ -935,12 +833,12 @@ impl ScreenrApp {
                     .add(
                         egui::Button::new(
                             RichText::new(if self.show_code_pairing {
-                                "Hide 6-Digit Code / IP Entry ▴"
+                                "Hide pairing code  ▴"
                             } else {
-                                "Use 6-Digit Code or IP Address Instead ▾"
+                                "Use a pairing code  ▾"
                             })
-                            .size(12.0)
-                            .color(Color32::from_rgb(147, 197, 253)),
+                            .size(13.0)
+                            .color(TEXT),
                         )
                         .frame(false),
                     )
@@ -950,18 +848,19 @@ impl ScreenrApp {
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("🔄 New QR").clicked() {
+                    if header_button(ui, "New QR").clicked() {
                         let (s, p, payload) = generate_qr_credentials();
                         self.qr_service_name = s.clone();
                         self.qr_password = p.clone();
                         self.qr_payload = payload;
                         self.rebuild_qr_texture(ctx);
-                        let _ = self.adb_worker.action_tx.send(
-                            AdbAction::RegenerateQrCredentials {
-                                service_name: s,
-                                password: p,
-                            },
-                        );
+                        let _ =
+                            self.adb_worker
+                                .action_tx
+                                .send(AdbAction::RegenerateQrCredentials {
+                                    service_name: s,
+                                    password: p,
+                                });
                     }
                 });
             });
@@ -999,14 +898,57 @@ impl ScreenrApp {
 
 fn sleek_card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::NONE
-        .fill(Color32::from_rgb(19, 24, 35))
-        .corner_radius(CornerRadius::same(14))
+        .fill(BG)
+        .corner_radius(CornerRadius::same(16))
         .inner_margin(egui::Margin::symmetric(16, 14))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(35, 44, 62)))
+        .stroke(Stroke::new(1.0, BORDER))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             add_contents(ui);
         });
+}
+
+fn pill(ui: &mut egui::Ui, label: &str) {
+    egui::Frame::NONE
+        .fill(BG)
+        .corner_radius(CornerRadius::same(20))
+        .inner_margin(egui::Margin::symmetric(10, 3))
+        .stroke(Stroke::new(1.0, BORDER))
+        .show(ui, |ui| {
+            ui.label(RichText::new(label).size(12.0).color(TEXT_DIM));
+        });
+}
+
+fn text_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    ui.add(egui::Button::new(RichText::new(label).size(13.0).color(TEXT)).frame(false))
+}
+
+fn header_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    ui.add(
+        egui::Button::new(RichText::new(label).size(13.0).strong().color(TEXT))
+            .fill(BG)
+            .stroke(Stroke::new(1.0, BORDER))
+            .corner_radius(CornerRadius::same(16)),
+    )
+}
+
+fn primary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    ui.add_sized(
+        [ui.available_width(), 44.0],
+        egui::Button::new(RichText::new(label).size(15.0).strong().color(INK))
+            .fill(BUTTON_FILL)
+            .corner_radius(CornerRadius::same(22)),
+    )
+}
+
+fn outline_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    ui.add_sized(
+        [ui.available_width(), 40.0],
+        egui::Button::new(RichText::new(label).size(14.0).strong().color(TEXT))
+            .fill(BG)
+            .stroke(Stroke::new(1.0, BORDER))
+            .corner_radius(CornerRadius::same(20)),
+    )
 }
 
 fn mini_remote_btn(ui: &mut egui::Ui, icon: &str, label: &str) -> egui::Response {
@@ -1014,35 +956,22 @@ fn mini_remote_btn(ui: &mut egui::Ui, icon: &str, label: &str) -> egui::Response
         [ui.available_width(), 44.0],
         egui::Button::new(
             RichText::new(format!("{}\n{}", icon, label))
-                .size(11.5)
+                .size(12.0)
                 .strong()
-                .color(Color32::from_rgb(226, 232, 240)),
+                .color(TEXT),
         )
-        .fill(Color32::from_rgb(27, 34, 49))
-        .corner_radius(CornerRadius::same(10)),
+        .fill(BG)
+        .stroke(Stroke::new(1.0, BORDER))
+        .corner_radius(CornerRadius::same(12)),
     )
 }
 
-fn sleek_toggle_row(
-    ui: &mut egui::Ui,
-    title: &str,
-    subtitle: &str,
-    value: &mut bool,
-) -> bool {
+fn sleek_toggle_row(ui: &mut egui::Ui, title: &str, subtitle: &str, value: &mut bool) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
-            ui.label(
-                RichText::new(title)
-                    .size(13.0)
-                    .strong()
-                    .color(Color32::from_rgb(230, 238, 252)),
-            );
-            ui.label(
-                RichText::new(subtitle)
-                    .size(11.0)
-                    .color(Color32::from_rgb(130, 146, 172)),
-            );
+            ui.label(RichText::new(title).size(15.0).strong().color(TEXT));
+            ui.label(RichText::new(subtitle).size(13.0).color(TEXT_DIM));
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ios_switch(ui, value).changed() {
@@ -1068,17 +997,17 @@ fn ios_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
     if ui.is_rect_visible(rect) {
         let how_on = ui.ctx().animate_bool_responsive(response.id, *on);
         let bg_color = if *on {
-            Color32::from_rgb(37, 99, 235)
+            BUTTON_FILL
         } else {
-            Color32::from_rgb(45, 55, 72)
+            Color32::from_rgb(62, 65, 68)
         };
+        let knob = if *on { INK } else { TEXT };
         let radius = 0.5 * rect.height();
         ui.painter()
             .rect_filled(rect, CornerRadius::same(radius as u8), bg_color);
         let circle_x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), how_on);
         let center = egui::pos2(circle_x, rect.center().y);
-        ui.painter()
-            .circle_filled(center, 0.78 * radius, Color32::WHITE);
+        ui.painter().circle_filled(center, 0.72 * radius, knob);
     }
 
     response
@@ -1086,24 +1015,56 @@ fn ios_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
 
 fn configure_sleek_theme(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
-    visuals.panel_fill = Color32::from_rgb(11, 14, 20);
-    visuals.window_fill = Color32::from_rgb(15, 19, 28);
-    visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(19, 24, 35);
-    visuals.widgets.inactive.bg_fill = Color32::from_rgb(28, 36, 52);
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(40, 52, 74);
-    visuals.widgets.active.bg_fill = Color32::from_rgb(37, 99, 235);
+    visuals.override_text_color = Some(TEXT);
+    visuals.panel_fill = BG;
+    visuals.window_fill = BG;
+    visuals.extreme_bg_color = BG;
+    visuals.faint_bg_color = HOVER;
+    visuals.code_bg_color = HOVER;
+    visuals.hyperlink_color = TEXT;
+    visuals.warn_fg_color = TEXT;
+    visuals.error_fg_color = TEXT;
+    visuals.window_stroke = Stroke::new(1.0, BORDER);
+    visuals.selection.bg_fill = HOVER;
+    visuals.selection.stroke = Stroke::new(1.0, TEXT);
+
+    let hairline = Stroke::new(1.0, BORDER);
+    visuals.widgets.noninteractive.bg_fill = BG;
+    visuals.widgets.noninteractive.weak_bg_fill = BG;
+    visuals.widgets.noninteractive.bg_stroke = hairline;
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT_DIM);
+
+    visuals.widgets.inactive.bg_fill = BG;
+    visuals.widgets.inactive.weak_bg_fill = Color32::from_rgba_unmultiplied(231, 233, 234, 14);
+    visuals.widgets.inactive.bg_stroke = hairline;
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT);
+
+    visuals.widgets.hovered.bg_fill = HOVER;
+    visuals.widgets.hovered.weak_bg_fill = Color32::from_rgba_unmultiplied(231, 233, 234, 28);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(83, 100, 113));
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, Color32::WHITE);
+
+    visuals.widgets.active.bg_fill = BUTTON_FILL;
+    visuals.widgets.active.weak_bg_fill = Color32::from_rgba_unmultiplied(231, 233, 234, 40);
+    visuals.widgets.active.bg_stroke = Stroke::NONE;
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0, INK);
+
+    visuals.widgets.open.bg_fill = HOVER;
+    visuals.widgets.open.bg_stroke = hairline;
+    visuals.widgets.open.fg_stroke = Stroke::new(1.0, TEXT);
+
     ctx.set_visuals(visuals);
 }
 
 fn main() -> eframe::Result<()> {
-    let start_in_tray = std::env::args()
-        .any(|arg| arg == "--tray" || arg == "--startup" || arg == "--minimized");
+    let start_in_tray =
+        std::env::args().any(|arg| arg == "--tray" || arg == "--startup" || arg == "--minimized");
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Screenr")
-            .with_inner_size([390.0, 535.0])
-            .with_min_inner_size([350.0, 460.0])
+            .with_inner_size([400.0, 600.0])
+            .with_min_inner_size([360.0, 520.0])
             .with_resizable(false)
             .with_visible(!start_in_tray),
         ..Default::default()
