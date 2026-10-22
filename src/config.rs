@@ -13,19 +13,19 @@ pub enum MirrorPreset {
 impl MirrorPreset {
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Pixel10Ultra120Hz => "Pixel 10 Ultra · 120Hz",
-            Self::WirelessBalanced => "Balanced · 60Hz",
-            Self::BatterySaver => "Battery Saver · 60Hz",
-            Self::VirtualDesktopDisplay => "Virtual Second Screen",
+            Self::Pixel10Ultra120Hz => "Native",
+            Self::WirelessBalanced => "1080p",
+            Self::BatterySaver => "720p",
+            Self::VirtualDesktopDisplay => "Desktop",
         }
     }
 
-    pub fn short_badge(&self) -> &'static str {
+    pub fn detail(&self) -> &'static str {
         match self {
-            Self::Pixel10Ultra120Hz => "120Hz · H.265 · Native",
-            Self::WirelessBalanced => "60Hz · H.265 · 1080p",
-            Self::BatterySaver => "60Hz · H.265 · 720p",
-            Self::VirtualDesktopDisplay => "1920×1080 Desktop · 90Hz",
+            Self::Pixel10Ultra120Hz => "H.265 · 120 Hz",
+            Self::WirelessBalanced => "H.265 · 60 Hz",
+            Self::BatterySaver => "H.265 · 60 Hz · lighter",
+            Self::VirtualDesktopDisplay => "1920×1080 virtual display · 90 Hz",
         }
     }
 }
