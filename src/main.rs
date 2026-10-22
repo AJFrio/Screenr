@@ -48,6 +48,7 @@ struct ScreenrApp {
 
     view_mode: ViewMode,
     window_hidden_to_tray: bool,
+    pending_initial_hide: bool,
     applied_viewport_size: bool,
     allow_quit: bool,
     pending_auto_mirror: bool,
@@ -69,12 +70,17 @@ struct ScreenrApp {
 }
 
 impl ScreenrApp {
-    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    fn new(cc: &eframe::CreationContext<'_>, start_in_tray: bool) -> Self {
         configure_theme(&cc.egui_ctx);
 
         let settings = StreamSettings::load();
         let (qr_service_name, qr_password, qr_payload) = generate_qr_credentials();
-        let adb_worker = AdbWorkerHandle::spawn(qr_service_name.clone(), qr_password.clone());
+        let adb_worker = AdbWorkerHandle::spawn(
+            cc.egui_ctx.clone(),
+            qr_service_name.clone(),
+            qr_password.clone(),
+            settings.last_known_wifi_addr.clone(),
+        );
         let scrcpy_mgr = ScrcpyManager::new(adb_worker.adb_path.clone());
         let tray = TrayController::spawn(cc.egui_ctx.clone());
         let hotkeys = HotkeyWatcher::spawn(cc.egui_ctx.clone(), adb_worker.adb_path.clone());
@@ -89,7 +95,8 @@ impl ScreenrApp {
             mdns_services: Vec::new(),
             selected_serial: None,
             view_mode: ViewMode::MainCard,
-            window_hidden_to_tray: false,
+            window_hidden_to_tray: start_in_tray,
+            pending_initial_hide: start_in_tray,
             applied_viewport_size: false,
             allow_quit: false,
             pending_auto_mirror: false,
@@ -378,6 +385,12 @@ impl ScreenrApp {
 
 impl eframe::App for ScreenrApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.pending_initial_hide {
+            self.pending_initial_hide = false;
+            self.window_hidden_to_tray = true;
+            ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+        }
+
         if ctx.input(|i| i.viewport().close_requested()) && !self.allow_quit {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             self.window_hidden_to_tray = true;
@@ -1083,6 +1096,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Screenr",
         options,
-        Box::new(|cc| Ok(Box::new(ScreenrApp::new(cc)))),
+        Box::new(move |cc| Ok(Box::new(ScreenrApp::new(cc, start_in_tray)))),
     )
 }
