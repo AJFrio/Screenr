@@ -14,7 +14,14 @@ if [[ ! -x "$SCRIPT_DIR/vendor/scrcpy/scrcpy" ]]; then
     mv "$SCRIPT_DIR/vendor/scrcpy-linux-x86_64-${SCRCPY_VERSION}" "$SCRIPT_DIR/vendor/scrcpy"
 fi
 
+# Rebuild whenever sources are newer than the binary. Skipping this left a stale UI running.
+needs_build=0
 if [[ ! -x "$SCRIPT_DIR/target/release/screenr" ]]; then
+    needs_build=1
+elif [[ -n "$(find src Cargo.toml Cargo.lock -newer "$SCRIPT_DIR/target/release/screenr" -print -quit)" ]]; then
+    needs_build=1
+fi
+if [[ "$needs_build" -eq 1 ]]; then
     echo "Building Screenr (release)..."
     cargo build --release
 fi

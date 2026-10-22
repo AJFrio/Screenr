@@ -569,17 +569,7 @@ fn run_adb_worker(
                     // Automatically connect to newly discovered Wireless Debugging endpoints on the LAN
                     if !auto_connected_endpoints.contains(&svc.address) {
                         auto_connected_endpoints.insert(svc.address.clone());
-                        if let Ok(out) = run_adb_cmd(&adb, &["connect", &svc.address]) {
-                            if out.contains("connected to") {
-                                let _ = update_tx.send(AdbUpdate::LogMessage {
-                                    level: LogLevel::Success,
-                                    message: format!(
-                                        "Auto-connected via Wireless Debugging ({})",
-                                        svc.address
-                                    ),
-                                });
-                            }
-                        }
+                        let _ = run_adb_cmd(&adb, &["connect", &svc.address]);
                     }
                 }
             }
