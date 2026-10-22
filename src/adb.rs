@@ -1,6 +1,8 @@
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
+use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -175,7 +177,12 @@ pub struct AdbWorkerHandle {
 }
 
 impl AdbWorkerHandle {
-    pub fn spawn(initial_qr_service: String, initial_qr_pass: String) -> Self {
+    pub fn spawn(
+        ctx: eframe::egui::Context,
+        initial_qr_service: String,
+        initial_qr_pass: String,
+        initial_last_wifi_addr: Option<String>,
+    ) -> Self {
         let (action_tx, action_rx) = mpsc::channel::<AdbAction>();
         let (update_tx, update_rx) = mpsc::channel::<AdbUpdate>();
         let adb_path = resolve_adb_binary();
@@ -183,11 +190,13 @@ impl AdbWorkerHandle {
 
         thread::spawn(move || {
             run_adb_worker(
+                ctx,
                 worker_adb,
                 action_rx,
                 update_tx,
                 initial_qr_service,
                 initial_qr_pass,
+                initial_last_wifi_addr,
             );
         });
 
@@ -217,20 +226,41 @@ fn run_adb_cmd(adb: &Path, args: &[&str]) -> Result<String, String> {
     }
 }
 
+fn extract_ipv4(addr_or_serial: &str) -> Option<Ipv4Addr> {
+    let host = addr_or_serial.split(':').next()?.trim();
+    host.parse::<Ipv4Addr>().ok()
+}
+
 fn run_adb_worker(
+    ctx: eframe::egui::Context,
     adb: PathBuf,
     action_rx: Receiver<AdbAction>,
     update_tx: Sender<AdbUpdate>,
     mut qr_service_name: String,
     mut qr_password: String,
+    initial_last_wifi_addr: Option<String>,
 ) {
     // Ensure ADB server is started
     let _ = run_adb_cmd(&adb, &["start-server"]);
 
+    let mut known_wifi_ip: Option<Ipv4Addr> = initial_last_wifi_addr
+        .as_deref()
+        .and_then(extract_ipv4);
+
     let mut telemetry_cache: HashMap<String, (Instant, AdbDevice)> = HashMap::new();
     let mut attempted_qr_pairings: HashSet<String> = HashSet::new();
-    let mut auto_connected_endpoints: HashSet<String> = HashSet::new();
+    let mut auto_connected_endpoints: HashMap<String, Instant> = HashMap::new();
     let mut last_poll = Instant::now() - Duration::from_secs(10);
+    let mut last_udp_mdns_probe = Instant::now() - Duration::from_secs(10);
+
+    // If we have a saved Wi-Fi endpoint, try a quick direct connect right away in case the port is unchanged
+    if let Some(ref addr) = initial_last_wifi_addr {
+        let trimmed = addr.trim();
+        if !trimmed.is_empty() {
+            auto_connected_endpoints.insert(trimmed.to_string(), Instant::now());
+            let _ = run_adb_cmd(&adb, &["connect", trimmed]);
+        }
+    }
 
     loop {
         // Process any queued user actions immediately
@@ -535,10 +565,78 @@ fn run_adb_worker(
         if last_poll.elapsed() >= Duration::from_millis(1500) {
             last_poll = Instant::now();
 
-            let mdns_services = poll_mdns_services(&adb);
+            let mut devices = poll_devices(&adb, &mut telemetry_cache);
 
-            // Check if any mDNS service matches our QR code pairing session or is an active pairing service
+            // Clean up any stale offline Wi-Fi transports so they can cleanly reconnect
+            let mut cleaned_offline = false;
+            for dev in &devices {
+                if dev.kind == ConnectionKind::Wifi && dev.state == "offline" {
+                    let _ = run_adb_cmd(&adb, &["disconnect", &dev.serial]);
+                    auto_connected_endpoints.remove(&dev.serial);
+                    cleaned_offline = true;
+                }
+            }
+            if cleaned_offline {
+                devices = poll_devices(&adb, &mut telemetry_cache);
+            }
+
+            for dev in &devices {
+                if dev.state == "device" {
+                    if let Some(ip) = extract_ipv4(&dev.serial)
+                        .or_else(|| dev.wifi_ip.as_deref().and_then(extract_ipv4))
+                    {
+                        known_wifi_ip = Some(ip);
+                    }
+                }
+            }
+
+            let has_online_wifi = devices
+                .iter()
+                .any(|d| d.state == "device" && d.kind == ConnectionKind::Wifi);
+
+            let mut mdns_services = poll_mdns_services(&adb);
+
+            // If no Wi-Fi device is connected (or adb mdns services hasn't seen the phone yet),
+            // actively nudge the phone's mDNS responder via unicast + multicast UDP 5353 and parse replies.
+            let has_connect_svc = mdns_services
+                .iter()
+                .any(|s| s.service_type.contains("_adb-tls-connect._tcp"));
+            if (!has_online_wifi || !has_connect_svc)
+                && last_udp_mdns_probe.elapsed() >= Duration::from_millis(2500)
+            {
+                last_udp_mdns_probe = Instant::now();
+                let probed = probe_mdns_services_udp(known_wifi_ip);
+                for svc in probed {
+                    if !mdns_services
+                        .iter()
+                        .any(|s| s.address == svc.address && s.service_type == svc.service_type)
+                    {
+                        mdns_services.push(svc);
+                    }
+                }
+                if !mdns_services
+                    .iter()
+                    .any(|s| s.service_type.contains("_adb-tls-connect._tcp"))
+                {
+                    for svc in poll_mdns_services(&adb) {
+                        if !mdns_services
+                            .iter()
+                            .any(|s| s.address == svc.address && s.service_type == svc.service_type)
+                        {
+                            mdns_services.push(svc);
+                        }
+                    }
+                }
+            }
+
+            let mut connected_new = false;
+
+            // Check if any mDNS service matches our QR code pairing session or is an active connect service
             for svc in &mdns_services {
+                if let Some(ip) = extract_ipv4(&svc.address) {
+                    known_wifi_ip = Some(ip);
+                }
+
                 if svc.service_type.contains("_adb-tls-pairing._tcp") {
                     // If the phone scanned our QR code, its instance_name matches `qr_service_name`
                     // (or starts with "studio-screenr-")
@@ -554,6 +652,7 @@ fn run_adb_worker(
                                 svc.address
                             ),
                         });
+                        ctx.request_repaint();
                         if let Ok(out) = run_adb_cmd(&adb, &["pair", &svc.address, &qr_password]) {
                             let _ = update_tx.send(AdbUpdate::LogMessage {
                                 level: LogLevel::Success,
@@ -562,23 +661,45 @@ fn run_adb_worker(
                             let _ = update_tx.send(AdbUpdate::QrAutoPaired {
                                 address: svc.address.clone(),
                             });
+                            ctx.request_repaint();
                             auto_connected_endpoints.clear();
                         }
                     }
                 } else if svc.service_type.contains("_adb-tls-connect._tcp") {
-                    // Automatically connect to newly discovered Wireless Debugging endpoints on the LAN
-                    if !auto_connected_endpoints.contains(&svc.address) {
-                        auto_connected_endpoints.insert(svc.address.clone());
-                        let _ = run_adb_cmd(&adb, &["connect", &svc.address]);
+                    // Automatically connect to discovered Wireless Debugging endpoints whenever not already online
+                    let already_online = devices.iter().any(|d| {
+                        d.state == "device"
+                            && (d.serial == svc.address
+                                || (!svc.instance_name.is_empty()
+                                    && d.serial.starts_with(&svc.instance_name)))
+                    });
+
+                    if !already_online {
+                        let should_try = match auto_connected_endpoints.get(&svc.address) {
+                            Some(last_try) => last_try.elapsed() >= Duration::from_secs(4),
+                            None => true,
+                        };
+                        if should_try {
+                            auto_connected_endpoints.insert(svc.address.clone(), Instant::now());
+                            if let Ok(out) = run_adb_cmd(&adb, &["connect", &svc.address]) {
+                                if out.contains("connected to") {
+                                    connected_new = true;
+                                }
+                            }
+                        }
                     }
                 }
             }
 
-            let devices = poll_devices(&adb, &mut telemetry_cache);
+            if connected_new {
+                devices = poll_devices(&adb, &mut telemetry_cache);
+            }
+
             let _ = update_tx.send(AdbUpdate::StateSnapshot {
                 devices,
                 mdns_services,
             });
+            ctx.request_repaint();
         }
 
         thread::sleep(Duration::from_millis(80));
@@ -595,15 +716,287 @@ fn poll_mdns_services(adb: &Path) -> Vec<MdnsService> {
             }
             let parts: Vec<&str> = trimmed.split_whitespace().collect();
             if parts.len() >= 3 {
+                // Prefer IPv4 address if adb outputs an address token
+                let addr = parts[2].to_string();
                 services.push(MdnsService {
                     instance_name: parts[0].to_string(),
                     service_type: parts[1].to_string(),
-                    address: parts[2].to_string(),
+                    address: addr,
                 });
             }
         }
     }
     services
+}
+
+fn detect_local_lan_ipv4(target_hint: Option<Ipv4Addr>) -> Option<Ipv4Addr> {
+    let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
+    let target = target_hint.unwrap_or(Ipv4Addr::new(8, 8, 8, 8));
+    sock.connect(SocketAddrV4::new(target, 5353)).ok()?;
+    match sock.local_addr().ok()? {
+        SocketAddr::V4(v4) if !v4.ip().is_loopback() && !v4.ip().is_unspecified() => Some(*v4.ip()),
+        _ => None,
+    }
+}
+
+fn build_mdns_ptr_query(qname: &str, unicast_response: bool) -> Vec<u8> {
+    let mut pkt = Vec::with_capacity(64);
+    // Transaction ID = 0, Flags = 0, QDCOUNT = 1, ANCOUNT = 0, NSCOUNT = 0, ARCOUNT = 0
+    pkt.extend_from_slice(&[0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+    for label in qname.split('.') {
+        let bytes = label.as_bytes();
+        if !bytes.is_empty() && bytes.len() < 64 {
+            pkt.push(bytes.len() as u8);
+            pkt.extend_from_slice(bytes);
+        }
+    }
+    pkt.push(0); // Root label
+    pkt.extend_from_slice(&12u16.to_be_bytes()); // QTYPE = PTR (12)
+    let qclass: u16 = if unicast_response { 0x8001 } else { 0x0001 };
+    pkt.extend_from_slice(&qclass.to_be_bytes());
+    pkt
+}
+
+fn read_dns_name(pkt: &[u8], mut pos: usize) -> Option<(String, usize)> {
+    let mut labels = Vec::new();
+    let mut jumped = false;
+    let mut end_pos = pos;
+    let mut hops = 0;
+
+    loop {
+        if pos >= pkt.len() || hops > 32 {
+            return None;
+        }
+        let len = pkt[pos];
+        if len == 0 {
+            if !jumped {
+                end_pos = pos + 1;
+            }
+            break;
+        } else if (len & 0xC0) == 0xC0 {
+            if pos + 1 >= pkt.len() {
+                return None;
+            }
+            let offset = (((len & 0x3F) as usize) << 8) | (pkt[pos + 1] as usize);
+            if !jumped {
+                end_pos = pos + 2;
+                jumped = true;
+            }
+            pos = offset;
+            hops += 1;
+        } else {
+            let label_len = (len & 0x3F) as usize;
+            pos += 1;
+            if pos + label_len > pkt.len() {
+                return None;
+            }
+            let label = String::from_utf8_lossy(&pkt[pos..pos + label_len]).to_string();
+            labels.push(label);
+            pos += label_len;
+            if !jumped {
+                end_pos = pos;
+            }
+        }
+    }
+
+    Some((labels.join("."), end_pos))
+}
+
+fn parse_mdns_packet(pkt: &[u8], src_ip: Ipv4Addr) -> Vec<MdnsService> {
+    let mut discovered = Vec::new();
+    if pkt.len() < 12 {
+        return discovered;
+    }
+
+    let qdcount = u16::from_be_bytes([pkt[4], pkt[5]]) as usize;
+    let ancount = u16::from_be_bytes([pkt[6], pkt[7]]) as usize;
+    let nscount = u16::from_be_bytes([pkt[8], pkt[9]]) as usize;
+    let arcount = u16::from_be_bytes([pkt[10], pkt[11]]) as usize;
+    let total_rr = ancount.saturating_add(nscount).saturating_add(arcount);
+    if total_rr == 0 {
+        return discovered;
+    }
+
+    let mut pos = 12;
+    for _ in 0..qdcount {
+        let Some((_, next_pos)) = read_dns_name(pkt, pos) else {
+            return discovered;
+        };
+        if next_pos + 4 > pkt.len() {
+            return discovered;
+        }
+        pos = next_pos + 4;
+    }
+
+    let mut srv_records: Vec<(String, u16, String)> = Vec::new();
+    let mut a_records: HashMap<String, Ipv4Addr> = HashMap::new();
+
+    for _ in 0..total_rr {
+        let Some((rr_name, next_pos)) = read_dns_name(pkt, pos) else {
+            break;
+        };
+        if next_pos + 10 > pkt.len() {
+            break;
+        }
+        let rtype = u16::from_be_bytes([pkt[next_pos], pkt[next_pos + 1]]);
+        let rdlength = u16::from_be_bytes([pkt[next_pos + 8], pkt[next_pos + 9]]) as usize;
+        let rdata_start = next_pos + 10;
+        let rdata_end = rdata_start.saturating_add(rdlength);
+        if rdata_end > pkt.len() {
+            break;
+        }
+
+        if rtype == 33 && rdlength >= 6 {
+            // SRV record
+            let port = u16::from_be_bytes([pkt[rdata_start + 4], pkt[rdata_start + 5]]);
+            let target = read_dns_name(pkt, rdata_start + 6)
+                .map(|(t, _)| t)
+                .unwrap_or_default();
+            srv_records.push((rr_name, port, target));
+        } else if rtype == 1 && rdlength == 4 {
+            // A record
+            let ip = Ipv4Addr::new(
+                pkt[rdata_start],
+                pkt[rdata_start + 1],
+                pkt[rdata_start + 2],
+                pkt[rdata_start + 3],
+            );
+            a_records.insert(rr_name, ip);
+        }
+
+        pos = rdata_end;
+    }
+
+    for (srv_name, port, target) in srv_records {
+        let ip = a_records.get(&target).copied().unwrap_or(src_ip);
+        for svc_type in ["_adb-tls-connect._tcp", "_adb-tls-pairing._tcp"] {
+            let needle = format!(".{}", svc_type);
+            if let Some(idx) = srv_name.find(&needle) {
+                let instance_name = srv_name[..idx].to_string();
+                if !instance_name.is_empty() && port > 0 {
+                    discovered.push(MdnsService {
+                        instance_name,
+                        service_type: svc_type.to_string(),
+                        address: format!("{}:{}", ip, port),
+                    });
+                }
+            }
+        }
+    }
+
+    discovered
+}
+
+fn bind_shared_mdns_socket(local_ip: Option<Ipv4Addr>) -> Option<UdpSocket> {
+    unsafe {
+        let fd = libc::socket(libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0);
+        if fd < 0 {
+            return None;
+        }
+        let yes: libc::c_int = 1;
+        let _ = libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_REUSEADDR,
+            &yes as *const _ as *const libc::c_void,
+            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        );
+        let _ = libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_REUSEPORT,
+            &yes as *const _ as *const libc::c_void,
+            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        );
+
+        let mut addr: libc::sockaddr_in = std::mem::zeroed();
+        addr.sin_family = libc::AF_INET as libc::sa_family_t;
+        addr.sin_port = 5353u16.to_be();
+        addr.sin_addr.s_addr = 0; // INADDR_ANY
+
+        if libc::bind(
+            fd,
+            &addr as *const _ as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+        ) < 0
+        {
+            addr.sin_port = 0;
+            if libc::bind(
+                fd,
+                &addr as *const _ as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            ) < 0
+            {
+                libc::close(fd);
+                return None;
+            }
+        }
+
+        use std::os::unix::io::FromRawFd;
+        let sock = UdpSocket::from_raw_fd(fd);
+        let iface = local_ip.unwrap_or(Ipv4Addr::UNSPECIFIED);
+        let _ = sock.join_multicast_v4(&Ipv4Addr::new(224, 0, 0, 251), &iface);
+        if let Some(ip) = local_ip {
+            let in_addr = libc::in_addr {
+                s_addr: u32::from_ne_bytes(ip.octets()),
+            };
+            let _ = libc::setsockopt(
+                sock.as_raw_fd(),
+                libc::IPPROTO_IP,
+                libc::IP_MULTICAST_IF,
+                &in_addr as *const _ as *const libc::c_void,
+                std::mem::size_of::<libc::in_addr>() as libc::socklen_t,
+            );
+        }
+        Some(sock)
+    }
+}
+
+fn probe_mdns_services_udp(known_wifi_ip: Option<Ipv4Addr>) -> Vec<MdnsService> {
+    let mut results = Vec::new();
+    let local_ip = detect_local_lan_ipv4(known_wifi_ip);
+    let Some(sock) = bind_shared_mdns_socket(local_ip) else {
+        return results;
+    };
+    let _ = sock.set_read_timeout(Some(Duration::from_millis(90)));
+    let _ = sock.set_write_timeout(Some(Duration::from_millis(90)));
+
+    let multicast_dest = SocketAddrV4::new(Ipv4Addr::new(224, 0, 0, 251), 5353);
+    for qname in ["_adb-tls-connect._tcp.local", "_adb-tls-pairing._tcp.local"] {
+        let q_multi = build_mdns_ptr_query(qname, false);
+        let q_uni = build_mdns_ptr_query(qname, true);
+        let _ = sock.send_to(&q_multi, multicast_dest);
+        let _ = sock.send_to(&q_uni, multicast_dest);
+        if let Some(phone_ip) = known_wifi_ip {
+            let phone_dest = SocketAddrV4::new(phone_ip, 5353);
+            let _ = sock.send_to(&q_uni, phone_dest);
+            let _ = sock.send_to(&q_multi, phone_dest);
+        }
+    }
+
+    let start = Instant::now();
+    let mut buf = [0u8; 2048];
+    while start.elapsed() < Duration::from_millis(220) {
+        match sock.recv_from(&mut buf) {
+            Ok((len, SocketAddr::V4(src))) => {
+                if Some(*src.ip()) == local_ip {
+                    continue;
+                }
+                for svc in parse_mdns_packet(&buf[..len], *src.ip()) {
+                    if !results
+                        .iter()
+                        .any(|r: &MdnsService| r.address == svc.address && r.service_type == svc.service_type)
+                    {
+                        results.push(svc);
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+
+    results
 }
 
 fn poll_devices(

@@ -291,6 +291,9 @@ impl ScrcpyManager {
         if self.scrcpy_server.exists() {
             cmd.env("SCRCPY_SERVER_PATH", &self.scrcpy_server);
         }
+        if std::env::var_os("DISPLAY").is_some() && std::env::var_os("SDL_VIDEODRIVER").is_none() {
+            cmd.env("SDL_VIDEODRIVER", "x11");
+        }
         cmd.stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
