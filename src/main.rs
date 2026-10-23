@@ -1,6 +1,7 @@
 mod adb;
 mod config;
 mod hotkeys;
+mod phone_frame;
 mod scrcpy;
 mod tray;
 
