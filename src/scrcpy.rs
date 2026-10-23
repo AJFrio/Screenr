@@ -29,6 +29,7 @@ pub struct ActiveScrcpySession {
     pub serial: String,
     pub model: String,
     pub kind: SessionKind,
+    pub frame: Option<crate::phone_frame::PhoneFrame>,
     pub child: Child,
 }
 
@@ -154,7 +155,10 @@ impl ScrcpyManager {
         if settings.always_on_top {
             args.push("--always-on-top".to_string());
         }
-        if settings.window_borderless {
+        // The mirror window is the phone itself. A title bar would sit outside the body.
+        if settings.preset != MirrorPreset::VirtualDesktopDisplay {
+            args.push("--window-borderless".to_string());
+        } else if settings.window_borderless {
             args.push("--window-borderless".to_string());
         }
         if settings.show_touches {
@@ -194,7 +198,7 @@ impl ScrcpyManager {
             SessionKind::ScreenMirror
         };
 
-        self.spawn_scrcpy(serial, model, kind, &args)
+        self.spawn_scrcpy(serial, model, kind, &title, settings.always_on_top, &args)
     }
 
     pub fn start_app_stream(
@@ -208,7 +212,8 @@ impl ScrcpyManager {
     ) -> Result<String, String> {
         let mut args: Vec<String> = Vec::new();
         args.push(format!("--serial={}", serial));
-        args.push(format!("--window-title={} — {}", display_name, model));
+        let title = format!("{display_name} — {model}");
+        args.push(format!("--window-title={title}"));
         args.push(format!("--video-codec={}", settings.video_codec.as_arg()));
         args.push(format!("--video-bit-rate={}M", settings.bitrate_mbps));
         args.push(format!("--max-fps={}", settings.max_fps));
@@ -239,6 +244,8 @@ impl ScrcpyManager {
             serial,
             model,
             SessionKind::AppStream(display_name.to_string()),
+            &title,
+            settings.always_on_top,
             &args,
         )
     }
@@ -251,11 +258,11 @@ impl ScrcpyManager {
     ) -> Result<String, String> {
         let mut args: Vec<String> = Vec::new();
         args.push(format!("--serial={}", serial));
-        args.push(format!(
-            "--window-title={} — Continuity Camera ({})",
-            model,
+        let title = format!(
+            "{model} — Continuity Camera ({})",
             settings.camera_facing.as_arg()
-        ));
+        );
+        args.push(format!("--window-title={title}"));
         args.push("--video-source=camera".to_string());
         args.push(format!(
             "--camera-facing={}",
@@ -275,7 +282,14 @@ impl ScrcpyManager {
             args.push("--audio-source=mic-camcorder".to_string());
         }
 
-        self.spawn_scrcpy(serial, model, SessionKind::CameraStream, &args)
+        self.spawn_scrcpy(
+            serial,
+            model,
+            SessionKind::CameraStream,
+            &title,
+            settings.always_on_top,
+            &args,
+        )
     }
 
     fn spawn_scrcpy(
@@ -283,6 +297,8 @@ impl ScrcpyManager {
         serial: &str,
         model: &str,
         kind: SessionKind,
+        title: &str,
+        above: bool,
         args: &[String],
     ) -> Result<String, String> {
         let mut cmd = Command::new(&self.scrcpy_bin);
@@ -309,12 +325,23 @@ impl ScrcpyManager {
         let id = self.next_id;
         self.next_id += 1;
         let label = kind.label();
+        let frame = if matches!(kind, SessionKind::ScreenMirror) {
+            Some(crate::phone_frame::PhoneFrame::attach(
+                title.to_string(),
+                self.adb_bin.clone(),
+                serial.to_string(),
+                above,
+            ))
+        } else {
+            None
+        };
 
         self.sessions.push(ActiveScrcpySession {
             id,
             serial: serial.to_string(),
             model: model.to_string(),
             kind,
+            frame,
             child,
         });
 

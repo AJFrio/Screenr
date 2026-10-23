@@ -19,8 +19,9 @@ rand = "0.8"
 dirs = "6.0"
 chrono = "0.4"
 ksni = "0.2"
-x11rb = "0.13"
+x11rb = { version = "0.13", features = ["shape"] }
 libc = "0.2"
+tiny-skia = "0.11"
 
 [profile.release]
 opt-level = 3
